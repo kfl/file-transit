@@ -1,3 +1,5 @@
+application: file-transit
+version: 2
 runtime: go
 api_version: go1
 
