@@ -1,23 +1,22 @@
 package filetransit
 
 import (
-	"io"
-	"fmt"
-	"time"
-	"net/http"
 	"crypto/rand"
 	"encoding/base64"
+	"fmt"
+	"io"
+	"net/http"
 	s "strings"
+	"time"
 
 	"golang.org/x/net/context"
 
+	"google.golang.org/api/iterator"
 	"google.golang.org/appengine"
 	"google.golang.org/appengine/file"
 	"google.golang.org/appengine/log"
-	"google.golang.org/api/iterator"
 
 	"cloud.google.com/go/storage"
-
 )
 
 func internalError(ctx context.Context, w http.ResponseWriter, msg string, err error) {
@@ -64,12 +63,12 @@ func handleRoot(w http.ResponseWriter, r *http.Request) {
 
 func uniqueFilename(stats string, base string) string {
 	randBytes := make([]byte, 32)
-    rand.Read(randBytes)
+	rand.Read(randBytes)
 	pre := stats
 	if pre == "" || pre == "trash" {
 		pre = "default"
 	}
-    return pre+"/"+base64.RawURLEncoding.EncodeToString(randBytes)+"/"+base
+	return "live/" + pre + "/" + base64.RawURLEncoding.EncodeToString(randBytes) + "/" + base
 }
 
 var bucket string
@@ -90,13 +89,13 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 	defer f.Close()
 
 	if bucket == "" {
-        var err error
-        if bucket, err = file.DefaultBucketName(ctx); err != nil {
+		var err error
+		if bucket, err = file.DefaultBucketName(ctx); err != nil {
 			internalError(ctx, w, "Failed to get default GCS bucket name", err)
 			return
-        }
+		}
 	}
-	
+
 	storageClient, err := storage.NewClient(ctx)
 	if err != nil {
 		internalError(ctx, w, "Failed to create GCS client", err)
@@ -105,8 +104,8 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 	defer storageClient.Close()
 
 	filename := uniqueFilename(r.FormValue("course"), fh.Filename)
-	
-	obj := storageClient.Bucket(bucket).Object(filename) 
+
+	obj := storageClient.Bucket(bucket).Object(filename)
 	sw := obj.NewWriter(ctx)
 	if _, err := io.Copy(sw, f); err != nil {
 		internalError(ctx, w, "Could not write file to GCS", err)
@@ -121,22 +120,21 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 	obj.ACL().Set(ctx, storage.AllUsers, storage.RoleReader)
 
 	dst := fmt.Sprintf("https://storage.googleapis.com/%s/%s", bucket, filename)
-	
+
 	http.Redirect(w, r, dst, http.StatusFound)
 }
-
 
 func handleCleanup(w http.ResponseWriter, r *http.Request) {
 	ctx := appengine.NewContext(r)
 
 	if bucket == "" {
 		var err error
-        if bucket, err = file.DefaultBucketName(ctx); err != nil {
+		if bucket, err = file.DefaultBucketName(ctx); err != nil {
 			internalError(ctx, w, "Failed to get default GCS bucket name", err)
 			return
-        }
+		}
 	}
-	
+
 	storageClient, err := storage.NewClient(ctx)
 	if err != nil {
 		internalError(ctx, w, "Failed to create GCS client", err)
@@ -144,9 +142,9 @@ func handleCleanup(w http.ResponseWriter, r *http.Request) {
 	}
 	defer storageClient.Close()
 
-
 	buck := storageClient.Bucket(bucket)
-	objs := buck.Objects(ctx, nil) 
+	query := &storage.Query{Prefix: "live/"}
+	objs := buck.Objects(ctx, query)
 	for {
 		objAttrs, err := objs.Next()
 		if err == iterator.Done {
@@ -157,19 +155,18 @@ func handleCleanup(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if (!s.HasPrefix(objAttrs.Name, "trash/")) && time.Since(objAttrs.Created).Minutes() > 10 {
+		if time.Since(objAttrs.Created).Minutes() > 10 {
 			src := buck.Object(objAttrs.Name)
-			dst := buck.Object("trash/"+objAttrs.Name)
+			dst := buck.Object(s.Replace(objAttrs.Name, "live", "trash", 1))
 			_, err = dst.CopierFrom(src).Run(ctx)
 			if err != nil {
 				log.Errorf(ctx, "Error while trying to delete %s: %v", objAttrs.Name, err)
 			}
 			src.Delete(ctx)
 		}
-		
+
 	}
 }
-
 
 func init() {
 	http.HandleFunc("/", handleRoot)
