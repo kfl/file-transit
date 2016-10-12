@@ -1,0 +1,4 @@
+cron:
+- description: clean up every 5 minutes
+  url: /cleanup-task
+  schedule: every 5 mins

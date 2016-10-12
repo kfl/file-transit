@@ -3,15 +3,18 @@ package filetransit
 import (
 	"io"
 	"fmt"
+	"time"
 	"net/http"
 	"crypto/rand"
 	"encoding/base64"
+	s "strings"
 
 	"golang.org/x/net/context"
 
 	"google.golang.org/appengine"
 	"google.golang.org/appengine/file"
 	"google.golang.org/appengine/log"
+	"google.golang.org/api/iterator"
 
 	"cloud.google.com/go/storage"
 
@@ -63,7 +66,7 @@ func uniqueFilename(stats string, base string) string {
 	randBytes := make([]byte, 32)
     rand.Read(randBytes)
 	pre := stats
-	if pre == "" {
+	if pre == "" || pre == "trash" {
 		pre = "default"
 	}
     return pre+"/"+base64.RawURLEncoding.EncodeToString(randBytes)+"/"+base
@@ -123,7 +126,53 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 }
 
 
+func handleCleanup(w http.ResponseWriter, r *http.Request) {
+	ctx := appengine.NewContext(r)
+
+	if bucket == "" {
+		var err error
+        if bucket, err = file.DefaultBucketName(ctx); err != nil {
+			internalError(ctx, w, "Failed to get default GCS bucket name", err)
+			return
+        }
+	}
+	
+	storageClient, err := storage.NewClient(ctx)
+	if err != nil {
+		internalError(ctx, w, "Failed to create GCS client", err)
+		return
+	}
+	defer storageClient.Close()
+
+
+	buck := storageClient.Bucket(bucket)
+	objs := buck.Objects(ctx, nil) 
+	for {
+		objAttrs, err := objs.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			internalError(ctx, w, "Failure while iterating through the bucket", err)
+			return
+		}
+
+		if (!s.HasPrefix(objAttrs.Name, "trash/")) && time.Since(objAttrs.Created).Minutes() > 10 {
+			src := buck.Object(objAttrs.Name)
+			dst := buck.Object("trash/"+objAttrs.Name)
+			_, err = dst.CopierFrom(src).Run(ctx)
+			if err != nil {
+				log.Errorf(ctx, "Error while trying to delete %s: %v", objAttrs.Name, err)
+			}
+			src.Delete(ctx)
+		}
+		
+	}
+}
+
+
 func init() {
 	http.HandleFunc("/", handleRoot)
+	http.HandleFunc("/cleanup-task", handleCleanup)
 	http.HandleFunc("/upload", handleUpload)
 }

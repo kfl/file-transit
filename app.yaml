@@ -8,5 +8,9 @@ handlers:
   static_files: favicon.ico
   upload: favicon\.ico
 
+- url: /cleanup-task
+  script: _go_app
+  login: admin
+  
 - url: /.*
   script: _go_app
