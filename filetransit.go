@@ -4,7 +4,6 @@ import (
 	"io"
 	"fmt"
 	"net/http"
-	"net/url"
 	"crypto/rand"
 	"encoding/base64"
 
@@ -63,11 +62,11 @@ func handleRoot(w http.ResponseWriter, r *http.Request) {
 func uniqueFilename(stats string, base string) string {
 	randBytes := make([]byte, 32)
     rand.Read(randBytes)
-	pre := url.QueryEscape(stats)
+	pre := stats
 	if pre == "" {
 		pre = "default"
 	}
-    return pre+"/"+base64.RawURLEncoding.EncodeToString(randBytes)+"/"+url.QueryEscape(base)
+    return pre+"/"+base64.RawURLEncoding.EncodeToString(randBytes)+"/"+base
 }
 
 var bucket string
