@@ -18,10 +18,10 @@ import (
 
 )
 
-func serveError(ctx context.Context, w http.ResponseWriter, err error) {
+func internalError(ctx context.Context, w http.ResponseWriter, msg string, err error) {
 	w.WriteHeader(http.StatusInternalServerError)
 	w.Header().Set("Content-Type", "text/plain")
-	io.WriteString(w, "Internal Server Error")
+	io.WriteString(w, msg)
 	log.Errorf(ctx, "%v", err)
 }
 
@@ -82,8 +82,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 
 	f, fh, err := r.FormFile("file")
 	if err != nil {
-		msg := fmt.Sprintf("Could not get file: %v", err)
-		http.Error(w, msg, http.StatusBadRequest)
+		internalError(ctx, w, "No file uploaded", err)
 		return
 	}
 	defer f.Close()
@@ -91,18 +90,14 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 	if bucket == "" {
         var err error
         if bucket, err = file.DefaultBucketName(ctx); err != nil {
-			log.Errorf(ctx, "failed to get default GCS bucket name: %v", err)
-			msg := fmt.Sprintf("failed to get default GCS bucket name: %v", err)
-			http.Error(w, msg, http.StatusInternalServerError)
+			internalError(ctx, w, "Failed to get default GCS bucket name", err)
 			return
         }
 	}
 	
 	storageClient, err := storage.NewClient(ctx)
 	if err != nil {
-		msg := fmt.Sprintf("failed to create client: %v", err)
-		http.Error(w, msg, http.StatusInternalServerError)
-		log.Errorf(ctx, msg) 
+		internalError(ctx, w, "Failed to create GCS client", err)
 		return
 	}
 	defer storageClient.Close()
@@ -112,23 +107,18 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 	obj := storageClient.Bucket(bucket).Object(filename) 
 	sw := obj.NewWriter(ctx)
 	if _, err := io.Copy(sw, f); err != nil {
-		msg := fmt.Sprintf("Could not write file: %v", err)
-		http.Error(w, msg, http.StatusInternalServerError)
-		log.Errorf(ctx, msg) 
+		internalError(ctx, w, "Could not write file to GCS", err)
 		return
 	}
 
 	if err := sw.Close(); err != nil {
-		msg := fmt.Sprintf("Could not put file: %v", err)
-		http.Error(w, msg, http.StatusInternalServerError)
-		log.Errorf(ctx, msg) 
+		internalError(ctx, w, "Could not *put* file to GCS", err)
 		return
 	}
 
 	obj.ACL().Set(ctx, storage.AllUsers, storage.RoleReader)
 
-	u, _ := url.Parse("/" + bucket + "/" + filename)
-	dst := fmt.Sprintf("https://storage.googleapis.com%s", u)
+	dst := fmt.Sprintf("https://storage.googleapis.com/%s/%s", bucket, filename)
 	
 	http.Redirect(w, r, dst, http.StatusFound)
 }
