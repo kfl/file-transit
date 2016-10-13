@@ -107,6 +107,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 
 	obj := storageClient.Bucket(bucket).Object(filename)
 	sw := obj.NewWriter(ctx)
+	sw.ACL = []storage.ACLRule{{storage.AllUsers, storage.RoleReader}}
 	if _, err := io.Copy(sw, f); err != nil {
 		internalError(ctx, w, "Could not write file to GCS", err)
 		return
@@ -117,13 +118,10 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	obj.ACL().Set(ctx, storage.AllUsers, storage.RoleReader)
-
 	dst := fmt.Sprintf("https://storage.googleapis.com/%s/%s", bucket, filename)
 
 	http.Redirect(w, r, dst, http.StatusFound)
 }
-
 
 func handleCleanup(w http.ResponseWriter, r *http.Request) {
 	ctx := appengine.NewContext(r)
@@ -160,10 +158,10 @@ func handleCleanup(w http.ResponseWriter, r *http.Request) {
 
 		if time.Since(objAttrs.Created).Minutes() > 10 {
 			workers += 1
-			go func (filename string) {
+			go func(filename string) {
 				src := buck.Object(filename)
 				dst := buck.Object(s.Replace(filename, "live", "trash", 1))
-				
+
 				if _, err := dst.CopierFrom(src).Run(ctx); err != nil {
 					log.Errorf(ctx, "Error while trying to copy %s: %v", filename, err)
 				} else if err := src.Delete(ctx); err != nil {
@@ -173,7 +171,7 @@ func handleCleanup(w http.ResponseWriter, r *http.Request) {
 			}(objAttrs.Name)
 		}
 	}
-	for i:= 0; i < workers; i++ {
+	for i := 0; i < workers; i++ {
 		<-done
 	}
 }
