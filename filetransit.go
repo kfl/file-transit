@@ -124,6 +124,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, dst, http.StatusFound)
 }
 
+
 func handleCleanup(w http.ResponseWriter, r *http.Request) {
 	ctx := appengine.NewContext(r)
 
@@ -145,6 +146,8 @@ func handleCleanup(w http.ResponseWriter, r *http.Request) {
 	buck := storageClient.Bucket(bucket)
 	query := &storage.Query{Prefix: "live/"}
 	objs := buck.Objects(ctx, query)
+	workers := 0
+	done := make(chan int)
 	for {
 		objAttrs, err := objs.Next()
 		if err == iterator.Done {
@@ -156,15 +159,22 @@ func handleCleanup(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if time.Since(objAttrs.Created).Minutes() > 10 {
-			src := buck.Object(objAttrs.Name)
-			dst := buck.Object(s.Replace(objAttrs.Name, "live", "trash", 1))
-			_, err = dst.CopierFrom(src).Run(ctx)
-			if err != nil {
-				log.Errorf(ctx, "Error while trying to delete %s: %v", objAttrs.Name, err)
-			}
-			src.Delete(ctx)
+			workers += 1
+			go func (filename string) {
+				src := buck.Object(filename)
+				dst := buck.Object(s.Replace(filename, "live", "trash", 1))
+				
+				if _, err := dst.CopierFrom(src).Run(ctx); err != nil {
+					log.Errorf(ctx, "Error while trying to copy %s: %v", filename, err)
+				} else if err := src.Delete(ctx); err != nil {
+					log.Errorf(ctx, "Error while trying to delete %s: %v", filename, err)
+				}
+				done <- 1
+			}(objAttrs.Name)
 		}
-
+	}
+	for i:= 0; i < workers; i++ {
+		<-done
 	}
 }
 
